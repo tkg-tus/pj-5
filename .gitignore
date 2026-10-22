@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# データ・学習結果（大きいのでGitに入れない）
+data/*
+!data/README.md
+runs/
+outputs/
+videos/
+*.npy
+*.pt
+*.mp4
+
+# ジョブの出力
+logs/*
+!logs/.gitkeep
+*.out
+
+# フロントエンド
+node_modules/
+dist/
+
+# OS・エディタ
+.DS_Store
+.vscode/
+.idea/
