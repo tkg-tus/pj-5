@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>人手評価 回答ページ</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --text: #1f1f1f; --sub: #666; --line: #d9d9d4;
+    --accent: #2f6fb3; --accent-bg: #e8f0fa; --ok: #2f8a4f; --warn: #b5541c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1b1c1e; --panel: #25272a; --text: #ececec; --sub: #a3a3a3; --line: #3b3e42;
+      --accent: #6fa8e6; --accent-bg: #23344a; --ok: #6cc28c; --warn: #e39a6c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1b1c1e; --panel: #25272a; --text: #ececec; --sub: #a3a3a3; --line: #3b3e42;
+    --accent: #6fa8e6; --accent-bg: #23344a; --ok: #6cc28c; --warn: #e39a6c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; line-height: 1.6; }
+  main { max-width: 860px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 1.3rem; margin: 0 0 12px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+  .sub { color: var(--sub); font-size: 0.9rem; }
+  .warn { color: var(--warn); }
+  .hidden { display: none !important; }
+  label.field { display: block; margin: 10px 0 4px; font-weight: 600; }
+  input[type=text] { font-size: 1rem; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+                     background: var(--bg); color: var(--text); width: 12em; }
+  button { font-size: 0.95rem; padding: 7px 14px; border-radius: 7px; border: 1px solid var(--line);
+           background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.chosen { background: var(--accent-bg); border-color: var(--accent); font-weight: 700; }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .player-box { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; overflow: hidden; }
+  .player-box > div, .player-box iframe { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .cands { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+  .cand { border: 1px solid var(--line); border-radius: 8px; padding: 8px; text-align: center; }
+  .cand.playing { border-color: var(--accent); }
+  .cand .state { font-size: 0.85rem; color: var(--sub); }
+  .cand .state.done { color: var(--ok); }
+  .step { margin-top: 12px; }
+  .step h3 { font-size: 1rem; margin: 0 0 6px; }
+  .progress { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 6px 0 2px; }
+  .progress > div { height: 100%; background: var(--accent); width: 0; }
+  ul.notes { margin: 6px 0 0 1.2em; padding: 0; }
+  @media (max-width: 520px) { .cands { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>人手評価 回答ページ</h1>
+
+  <!-- 開始画面 -->
+  <section id="start" class="panel">
+    <p id="fileWarn" class="warn hidden">このページはファイルを直接開いた状態（file://）です。YouTube が再生できないことがあるので、配られた URL から開くか、<code>python -m http.server</code> で開いてください。</p>
+    <div id="resumeBox" class="hidden">
+      <p><strong>途中の回答があります：</strong><span id="resumeInfo"></span></p>
+      <div class="row"><button class="primary" id="resumeBtn">続きから再開</button></div>
+      <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
+    </div>
+    <label class="field" for="rater">評価者 ID（例：r3）</label>
+    <input type="text" id="rater" autocomplete="off">
+    <label class="field" for="qfile">問題ファイル（questions_〇〇.json）</label>
+    <input type="file" id="qfile" accept=".json,application/json">
+    <p class="sub" id="qinfo"></p>
+    <div class="panel" style="margin-top:12px">
+      <strong>回答のしかた</strong>
+      <ul class="notes" id="instructions"></ul>
+    </div>
+    <div class="row"><button class="primary" id="startBtn" disabled>開始</button></div>
+  </section>
+
+  <!-- 問題画面 -->
+  <section id="quiz" class="hidden">
+    <div class="panel">
+      <div class="row" style="justify-content:space-between">
+        <strong id="qnum"></strong>
+        <button id="dlBtn">ここまでの回答を CSV で保存</button>
+      </div>
+      <div class="progress"><div id="bar"></div></div>
+      <div class="sub" id="qtitle"></div>
+    </div>
+
+    <div class="panel">
+      <div class="player-box"><div id="player"></div></div>
+      <p id="playerMsg" class="sub">候補のボタンを押すと、その区間だけが再生されます。</p>
+      <p id="playerErr" class="warn hidden">この動画は再生できませんでした。<button id="skipBtn">この問題を飛ばす</button></p>
+      <div class="cands" id="cands"></div>
+
+      <div class="step">
+        <h3>1. 一番「見どころ」だと思う候補（1位）</h3>
+        <div class="row" id="rank1"></div>
+      </div>
+      <div class="step">
+        <h3>2. 残りのうち、より「見どころ」だと思う候補（2位）</h3>
+        <div class="row" id="rank2"></div>
+        <p class="sub" id="rank3"></p>
+      </div>
+      <div class="step">
+        <h3>3. このゲームを知っていますか</h3>
+        <div class="row" id="fam"></div>
+      </div>
+      <p class="sub" id="lockMsg">3つの候補をすべて最後まで再生すると、順位を選べます（何度見直しても構いません）。</p>
+      <div class="row" style="justify-content:flex-end"><button class="primary" id="nextBtn" disabled>次へ</button></div>
+    </div>
+  </section>
+
+  <!-- 終了画面 -->
+  <section id="done" class="panel hidden">
+    <h2 style="margin-top:0">全問終わりました</h2>
+    <p>回答の CSV がダウンロードされました。ファイル <code id="doneName"></code> を、指定の共有フォルダに置いてください。</p>
+    <div class="row"><button id="dlBtn2">もう一度ダウンロード</button></div>
+  </section>
+</main>
+
+<script>
+// ===== 設定（チームで決めたら書き換える） =====
+const INSTRUCTIONS = [
+  "「見どころ」＝ 切り抜き動画にするなら入れたい、一番盛り上がる場面（説明文はチームで決めたものに差し替える）",
+  "各問題で3つの候補（各15秒）をすべて最後まで見てから、順位を付けてください。何度見直しても構いません",
+  "ほかの人と相談しないでください",
+  "動画の前に広告が流れたら、飛ばして構いません",
+  "途中でページを閉じても、同じ評価者 ID と問題ファイルで開き直せば続きから再開できます",
+];
+const FAMILIARITY = ["遊んだ", "知っている", "知らない"];
+const CSV_COLS = ["rater_id", "set_id", "question_id", "video_id", "youtube_id", "title", "genre", "q_order", "slot",
+                  "source", "start_sec", "rank", "plays", "familiarity", "answer_sec", "answered_at", "status"];
+
+// ===== 保存（localStorage は使えない環境もあるので、失敗しても止まらないようにする） =====
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } },
+};
+const LAST_KEY = "he:last";
+const sessionKey = (setId, rater) => `he:${setId}:${rater}`;
+
+// ===== 乱数（評価者 ID と問題セットから決まる。再読み込みしても同じ順番になる） =====
+function seedOf(str) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i++) { h = Math.imul(h ^ str.charCodeAt(i), 3432918353); h = (h << 13) | (h >>> 19); }
+  return () => { h = Math.imul(h ^ (h >>> 16), 2246822507); h = Math.imul(h ^ (h >>> 13), 3266489909); return (h ^= h >>> 16) >>> 0; };
+}
+function rng(str) {
+  let a = seedOf(str)();
+  return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a);
+                 t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+function shuffled(list, str) {
+  const r = rng(str), a = list.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+
+// ===== 状態 =====
+let S = null;       // {rater, setId, clip, questions, order, answers: {qid: rows}}
+let cur = null;     // 今の問題の状態
+const $ = id => document.getElementById(id);
+
+// ===== 開始画面 =====
+if (location.protocol === "file:") $("fileWarn").classList.remove("hidden");
+$("instructions").innerHTML = INSTRUCTIONS.map(t => `<li>${esc(t)}</li>`).join("");
+let loaded = null;
+
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c])); }
+function updateStartBtn() { $("startBtn").disabled = !(loaded && $("rater").value.trim()); }
+
+$("rater").addEventListener("input", updateStartBtn);
+$("qfile").addEventListener("change", async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try {
+    const q = JSON.parse(await f.text());
+    if (!q.set_id || !Array.isArray(q.questions) || !q.questions.length) throw new Error("形が違う");
+    loaded = q;
+    $("qinfo").textContent = `問題セット「${q.set_id}」：${q.questions.length}問（候補の長さ ${q.clip_sec || 15}秒）`;
+  } catch (err) {
+    loaded = null;
+    $("qinfo").innerHTML = `<span class="warn">問題ファイルを読めませんでした（${esc(err.message)}）</span>`;
+  }
+  updateStartBtn();
+});
+
+(function showResume() {
+  const last = store.get(LAST_KEY);
+  const s = last && store.get(sessionKey(last.setId, last.rater));
+  if (!s || Object.keys(s.answers).length >= s.order.length) return;
+  $("resumeInfo").textContent = `評価者 ${s.rater}・問題セット「${s.setId}」・${Object.keys(s.answers).length} / ${s.order.length}問 回答済み`;
+  $("resumeBox").classList.remove("hidden");
+  $("resumeBtn").onclick = () => begin(s);
+})();
+
+$("startBtn").onclick = () => {
+  const rater = $("rater").value.trim();
+  const saved = store.get(sessionKey(loaded.set_id, rater));
+  const s = saved || {
+    rater, setId: loaded.set_id, clip: loaded.clip_sec || 15, questions: loaded.questions,
+    order: shuffled(loaded.questions.map(q => q.question_id), `${loaded.set_id}|${rater}|order`), answers: {},
+  };
+  begin(s);
+};
+
+function begin(s) {
+  S = s;
+  store.set(LAST_KEY, {setId: S.setId, rater: S.rater});
+  save();
+  $("start").classList.add("hidden");
+  $("quiz").classList.remove("hidden");
+  loadPlayerApi(() => nextQuestion());
+}
+function save() { store.set(sessionKey(S.setId, S.rater), S); }
+
+// ===== YouTube プレーヤー =====
+let player = null, ready = false, poll = null;
+function loadPlayerApi(cb) {
+  window.onYouTubeIframeAPIReady = () => {
+    player = new YT.Player("player", {
+      playerVars: {controls: 0, disablekb: 1, fs: 0, rel: 0, playsinline: 1, iv_load_policy: 3},
+      events: {
+        onReady: () => { ready = true; cb(); },
+        onStateChange: e => { if (e.data === YT.PlayerState.ENDED) markWatched(); },
+        onError: () => { $("playerErr").classList.remove("hidden"); },
+      },
+    });
+  };
+  const s = document.createElement("script");
+  s.src = "https://www.youtube.com/iframe_api";
+  s.onerror = () => { $("playerMsg").innerHTML = '<span class="warn">YouTube のプレーヤーを読み込めませんでした。ネット接続を確認して、ページを再読み込みしてください。</span>'; };
+  document.head.appendChild(s);
+}
+function playSlot(i) {
+  if (!ready) return;
+  const c = cur.cands[i];
+  cur.active = i;
+  cur.plays[i] += 1;
+  $("playerErr").classList.add("hidden");
+  player.loadVideoById({videoId: cur.q.youtube_id, startSeconds: c.start_sec, endSeconds: c.start_sec + S.clip});
+  clearInterval(poll);
+  poll = setInterval(() => {  // 区間の終わりまで再生されたら「視聴済み」にする
+    const t = player.getCurrentTime ? player.getCurrentTime() : 0;
+    if (t >= c.start_sec + S.clip - 0.5) markWatched();
+  }, 250);
+  renderCands();
+}
+function markWatched() {
+  if (cur && cur.active !== null && !cur.watched[cur.active]) { cur.watched[cur.active] = true; renderAll(); }
+  clearInterval(poll);
+}
+
+// ===== 1問 =====
+function nextQuestion() {
+  const remaining = S.order.filter(id => !(id in S.answers));
+  if (!remaining.length) return finish();
+  const q = S.questions.find(x => x.question_id === remaining[0]);
+  cur = {
+    q, cands: shuffled(q.candidates, `${S.setId}|${S.rater}|${q.question_id}`),
+    watched: [false, false, false], plays: [0, 0, 0], active: null,
+    rank1: null, rank2: null, fam: null, shownAt: performance.now(),
+  };
+  if (player && player.stopVideo) player.stopVideo();
+  $("playerErr").classList.add("hidden");
+  const n = Object.keys(S.answers).length;
+  $("qnum").textContent = `問題 ${n + 1} / ${S.order.length}`;
+  $("bar").style.width = `${100 * n / S.order.length}%`;
+  $("qtitle").textContent = q.title || "";
+  renderAll();
+  window.scrollTo(0, 0);
+}
+function renderCands() {
+  $("cands").innerHTML = cur.cands.map((c, i) => `
+    <div class="cand ${cur.active === i ? "playing" : ""}">
+      <button data-play="${i}">候補${i + 1} を再生</button>
+      <div class="state ${cur.watched[i] ? "done" : ""}">${cur.watched[i] ? "視聴済み" : (cur.active === i ? "再生中" : "未視聴")}</div>
+    </div>`).join("");
+  document.querySelectorAll("[data-play]").forEach(b => b.onclick = () => playSlot(+b.dataset.play));
+}
+function renderAll() {
+  renderCands();
+  const unlocked = cur.watched.every(Boolean);
+  $("lockMsg").classList.toggle("hidden", unlocked);
+  $("rank1").innerHTML = [0, 1, 2].map(i =>
+    `<button data-r1="${i}" class="${cur.rank1 === i ? "chosen" : ""}" ${unlocked ? "" : "disabled"}>候補${i + 1}</button>`).join("");
+  $("rank2").innerHTML = [0, 1, 2].filter(i => i !== cur.rank1).map(i =>
+    `<button data-r2="${i}" class="${cur.rank2 === i ? "chosen" : ""}" ${unlocked && cur.rank1 !== null ? "" : "disabled"}>候補${i + 1}</button>`).join("");
+  const third = (cur.rank1 !== null && cur.rank2 !== null) ? [0, 1, 2].find(i => i !== cur.rank1 && i !== cur.rank2) : null;
+  $("rank3").textContent = third === null ? "" : `3位：候補${third + 1}`;
+  $("fam").innerHTML = FAMILIARITY.map(f =>
+    `<button data-fam="${f}" class="${cur.fam === f ? "chosen" : ""}">${f}</button>`).join("");
+  document.querySelectorAll("[data-r1]").forEach(b => b.onclick = () => { cur.rank1 = +b.dataset.r1; if (cur.rank2 === cur.rank1) cur.rank2 = null; renderAll(); });
+  document.querySelectorAll("[data-r2]").forEach(b => b.onclick = () => { cur.rank2 = +b.dataset.r2; renderAll(); });
+  document.querySelectorAll("[data-fam]").forEach(b => b.onclick = () => { cur.fam = b.dataset.fam; renderAll(); });
+  $("nextBtn").disabled = !(unlocked && cur.rank1 !== null && cur.rank2 !== null && cur.fam);
+}
+
+function record(status) {
+  const q = cur.q, n = Object.keys(S.answers).length;
+  const ranks = [0, 1, 2].map(i => status !== "answered" ? "" : i === cur.rank1 ? 1 : i === cur.rank2 ? 2 : 3);
+  const sec = ((performance.now() - cur.shownAt) / 1000).toFixed(1), at = new Date().toISOString();
+  S.answers[q.question_id] = cur.cands.map((c, i) => ({
+    rater_id: S.rater, set_id: S.setId, question_id: q.question_id, video_id: q.video_id, youtube_id: q.youtube_id,
+    title: q.title || "", genre: q.genre || "", q_order: n + 1, slot: i + 1, source: c.source, start_sec: c.start_sec,
+    rank: ranks[i], plays: cur.plays[i], familiarity: cur.fam || "", answer_sec: sec, answered_at: at, status,
+  }));
+  save();
+  nextQuestion();
+}
+$("nextBtn").onclick = () => record("answered");
+$("skipBtn").onclick = () => record("skipped");
+
+// ===== CSV =====
+function csvText() {
+  const cell = v => { const s = String(v ?? ""); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const rows = S.order.filter(id => id in S.answers).flatMap(id => S.answers[id]);
+  return "﻿" + [CSV_COLS.join(","), ...rows.map(r => CSV_COLS.map(c => cell(r[c])).join(","))].join("\r\n") + "\r\n";
+}
+const fileName = () => `votes_${S.setId}_${S.rater}.csv`;
+function download() {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csvText()], {type: "text/csv;charset=utf-8"}));
+  a.download = fileName();
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+$("dlBtn").onclick = download;
+$("dlBtn2").onclick = download;
+
+function finish() {
+  if (player && player.stopVideo) player.stopVideo();
+  $("quiz").classList.add("hidden");
+  $("done").classList.remove("hidden");
+  $("doneName").textContent = fileName();
+  download();
+}
+</script>
+</body>
+</html>
