@@ -36,6 +36,7 @@ def parse_args():
     p.add_argument("--cluster", type=int, default=None)  # ジャンル（cluster_id 0〜9）で絞る。指定なしなら全部
     p.add_argument("--include_tags", nargs="*", default=[])  # このどれかのタグが付いた動画だけ使う
     p.add_argument("--exclude_tags", nargs="*", default=[])  # このどれかのタグが付いた動画は使わない
+    p.add_argument("--exclude_list", default=None)  # ここに書いた video_id（1行に1つ）は使わない（人手評価用に取っておく動画など）
     p.add_argument("--count_only", action="store_true")  # 選ばれる本数を表示するだけで、変換はしない
     p.add_argument("--out", default="data_mosu")
     p.add_argument("--seed", type=int, default=0)  # 動画を選ぶときの乱数
@@ -97,8 +98,15 @@ def main():
         meta = {r["video_id"]: r for r in csv.DictReader(f)}
     include = tag_indices(args.include_tags, args.mosu_dir) if args.include_tags else set()
     exclude = tag_indices(args.exclude_tags, args.mosu_dir) if args.exclude_tags else set()
+    held_out = set()
+    if args.exclude_list:
+        with open(args.exclude_list, encoding="utf-8-sig") as f:
+            held_out = {line.strip().split(",")[0] for line in f if line.strip()}
+        print(f"{args.exclude_list} の {len(held_out)}本は使わない")
 
     def ok(vid):
+        if vid in held_out:
+            return False
         if args.cluster is not None and int(meta[vid]["cluster_id"]) != args.cluster:
             return False
         tags = set(ast.literal_eval(meta[vid]["labels"]))
